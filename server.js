@@ -103,7 +103,8 @@ io.on('connection', (socket) => {
   });
 });
 
-const PORT = 80;
+const PORT = process.env.PORT || 3000; // Change this from 80 to 3000
 server.listen(PORT, () => {
-  console.log(`Server running on http://35.194.15.58:${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
+
