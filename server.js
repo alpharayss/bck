@@ -9,7 +9,7 @@ const rateLimit = require('express-rate-limit');
 
 const app = express();
 
-// Enhanced CORS configuration
+// Enable CORS with dynamic origins
 app.use(cors({
   origin: process.env.ALLOWED_ORIGINS?.split(',') || '*',
   methods: ['GET', 'POST'],
@@ -18,7 +18,7 @@ app.use(cors({
 
 app.use(express.json());
 
-// Rate limiting for API endpoints
+// Rate limiting API calls
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100
@@ -27,7 +27,7 @@ app.use('/api/', apiLimiter);
 
 const server = http.createServer(app);
 
-// Enhanced Socket.IO configuration
+// Setup Socket.IO with Redis adapter for horizontal scaling
 const io = socketIo(server, {
   cors: {
     origin: process.env.ALLOWED_ORIGINS?.split(',') || '*',
@@ -39,14 +39,14 @@ const io = socketIo(server, {
   pingInterval: 5000
 });
 
-// Redis adapter for horizontal scaling
+// Redis adapter for distributed scaling
 if (process.env.REDIS_URL) {
   io.adapter(redisAdapter(process.env.REDIS_URL));
 }
 
-// Enhanced meeting storage with connection states
 const meetings = new Map();
 
+// Helper to generate meeting IDs
 const generateMeetingId = () => {
   return uuidv4().substring(0, 8).toUpperCase();
 };
@@ -58,12 +58,12 @@ app.use((req, res, next) => {
   next();
 });
 
-// REST API Endpoints with enhanced validation
+// API endpoint to create a meeting
 app.post('/api/meetings', (req, res) => {
   try {
     const meetingId = generateMeetingId();
     meetings.set(meetingId, {
-      participants: new Map(), // Now tracks socket IDs and their states
+      participants: new Map(),
       createdAt: new Date(),
       metadata: {
         creator: req.ip,
@@ -80,18 +80,19 @@ app.post('/api/meetings', (req, res) => {
   }
 });
 
+// API endpoint to get meeting info
 app.get('/api/meetings/:id', (req, res) => {
   try {
     const meeting = meetings.get(req.params.id);
     if (!meeting) {
       return res.status(404).json({ error: 'Meeting not found' });
     }
-    
+
     const participants = [];
     meeting.participants.forEach((state, id) => {
       participants.push({ id, state });
     });
-    
+
     res.json({
       id: req.params.id,
       participantCount: participants.length,
@@ -104,9 +105,8 @@ app.get('/api/meetings/:id', (req, res) => {
   }
 });
 
-// Enhanced WebSocket Signaling with error handling
+// WebSocket authentication and connection handling
 io.use((socket, next) => {
-  // Basic authentication middleware
   if (process.env.REQUIRE_AUTH === 'true') {
     const { token } = socket.handshake.auth;
     if (token !== process.env.AUTH_TOKEN) {
@@ -118,15 +118,14 @@ io.use((socket, next) => {
 
 io.on('connection', (socket) => {
   console.log('New client connected:', socket.id);
-  
-  // Track connection health
+
   let connectionTimer;
   const startConnectionTimer = () => {
     connectionTimer = setTimeout(() => {
       socket.disconnect(true);
     }, 30000); // 30s timeout
   };
-  
+
   socket.on('ping', () => {
     clearTimeout(connectionTimer);
     startConnectionTimer();
@@ -149,13 +148,11 @@ io.on('connection', (socket) => {
       meeting.participants.set(socket.id, 'connecting');
       socket.join(meetingId);
 
-      // Notify existing participants
       socket.to(meetingId).emit('participant-joined', {
         id: socket.id,
         state: 'connecting'
       });
 
-      // Send list of existing participants to new joiner
       const others = [];
       meeting.participants.forEach((state, id) => {
         if (id !== socket.id) others.push({ id, state });
@@ -242,8 +239,7 @@ io.on('connection', (socket) => {
       if (meeting.participants.has(socket.id)) {
         meeting.participants.delete(socket.id);
         io.to(meetingId).emit('participant-left', socket.id);
-        
-        // Cleanup empty meetings after delay
+
         if (meeting.participants.size === 0) {
           setTimeout(() => {
             if (meetings.get(meetingId)?.participants.size === 0) {
@@ -265,16 +261,17 @@ app.get('/health', (req, res) => {
   });
 });
 
-const PORT = process.env.PORT || 3000;
+// Listen to Cloud Run on port 8080
+const PORT = process.env.PORT || 8080; 
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
 
-// Cleanup old meetings periodically
+// Periodically clean up old meetings
 setInterval(() => {
   const now = new Date();
   meetings.forEach((meeting, id) => {
-    if (now - meeting.createdAt > 24 * 60 * 60 * 1000) { // 24h old
+    if (now - meeting.createdAt > 24 * 60 * 60 * 1000) {
       meetings.delete(id);
     }
   });
